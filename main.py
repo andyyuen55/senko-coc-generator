@@ -139,23 +139,24 @@ with tab1:
     st.divider()
     
     st.subheader("📊 目前 Google 試算表資料概覽")
-    st.write("💡 提示：你現在可以直接打開 Google 試算表進行修改，網頁重整後會自動讀取最新資料！")
+    st.write("💡 提示：你現在可以直接打開 Google 試算表進行批次修改，網頁重整後會自動讀取最新資料！")
     df_main = get_main_df()
-    st.table(df_main) 
-
-    st.subheader("🗑️ 刪除產品資料")
-    all_senko = ["(請選擇要刪除的型號)"] + df_main["senko_pn"].tolist() if not df_main.empty else ["(無資料)"]
-    del_target = st.selectbox("選擇要刪除的總型號", all_senko)
-    if st.button("❌ 刪除此產品") and del_target != "(請選擇要刪除的型號)":
-        with st.spinner('刪除中...'):
-            df_m = get_main_df()
-            df_s = get_sub_df()
-            df_m = df_m[df_m["senko_pn"] != del_target]
-            df_s = df_s[df_s["parent_senko_pn"] != del_target]
-            write_df(ws_main, df_m)
-            write_df(ws_sub, df_s)
-            st.success("🗑️ 產品已刪除！")
-            st.rerun()
+    
+    # ✨ 升級：使用 Expander (折疊區塊) 將龐大的表格收納起來
+    with st.expander("👀 點擊這裡展開 / 隱藏所有產品清單", expanded=False):
+        # ✨ 升級：加入快速搜尋功能
+        search_term = st.text_input("🔍 快速搜尋總型號 (Senko PN):", "")
+        
+        if search_term.strip():
+            # 如果有輸入字，就只顯示包含該關鍵字的型號
+            filtered_df = df_main[df_main["senko_pn"].astype(str).str.contains(search_term.strip(), case=False, na=False)]
+            if filtered_df.empty:
+                st.warning("找不到符合的型號。")
+            else:
+                st.table(filtered_df)
+        else:
+            # 如果搜尋框是空的，就顯示全部表格
+            st.table(df_main)
 
 # --- 分頁 2：生成 COC 報表 ---
 with tab2:
