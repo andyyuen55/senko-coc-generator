@@ -178,7 +178,8 @@ with tab2:
                 inv_str = ", ".join([i.strip() for i in invoice_input.split('\n') if i.strip()])
                 today_str = datetime.now().strftime("%d-%b-%Y").upper()
 
-                senko_list = [s.strip() for s in target_senko_input.strip().split('\n') if s.strip()]
+                # ✨ 升級 1：將輸入的搜尋型號「去除頭尾空白」並「強制轉大寫」
+                senko_list = [str(s).strip().upper() for s in target_senko_input.strip().split('\n') if str(s).strip()]
                 
                 df_m = get_main_df()
                 df_s = get_sub_df()
@@ -186,15 +187,29 @@ with tab2:
                 items_list = []
                 not_found_list = []
 
+                # 準備乾淨的比對資料庫 (不改變原始資料，只在背景做轉換比對)
+                if not df_m.empty:
+                    db_m_clean = df_m["senko_pn"].astype(str).str.strip().str.upper()
+                else:
+                    db_m_clean = pd.Series([], dtype=str)
+                    
+                if not df_s.empty and "parent_senko_pn" in df_s.columns:
+                    db_s_clean = df_s["parent_senko_pn"].astype(str).str.strip().str.upper()
+                else:
+                    db_s_clean = pd.Series([], dtype=str)
+
                 for target_senko in senko_list:
-                    main_match = df_m[df_m["senko_pn"] == target_senko]
+                    # ✨ 升級 2：使用乾淨無空白的字串進行比對
+                    main_match = df_m[db_m_clean == target_senko]
+                    
                     if not main_match.empty:
                         m_row = main_match.iloc[0]
-                        m_senko = str(m_row["senko_pn"])
+                        m_senko = str(m_row["senko_pn"]) # 寫入 Word 時，依然保留你最原本輸入的樣子
                         m_desc = str(m_row["description"])
                         m_country = str(m_row["country"])
                         
-                        sub_match = df_s[df_s["parent_senko_pn"] == target_senko]
+                        sub_match = df_s[db_s_clean == target_senko]
+                        
                         if not sub_match.empty:
                             for i, (_, s_row) in enumerate(sub_match.iterrows()):
                                 items_list.append({
@@ -208,13 +223,13 @@ with tab2:
                                 "senko_pn": m_senko, "item_pn": "", "description": m_desc, "country": m_country
                             })
                     else:
-                        not_found_list.append(target_senko)
+                        # 紀錄使用者原本輸入的字樣，方便除錯
+                        original_input_senko = target_senko_input.strip().split('\n')[senko_list.index(target_senko)]
+                        not_found_list.append(original_input_senko)
 
-                # ✨ 新增：強制更新提示鎖
                 if not_found_list:
                     st.error(f"🛑 生成失敗！系統在資料庫中找不到以下型號：\n\n**{', '.join(not_found_list)}**\n\n👉 **請先前往「🗂️ 資料庫管理」分頁新增這些產品資料，然後再回來重新生成。**")
                 else:
-                    # 只有在全部型號都找到的情況下，才會開始生成 Word 檔案
                     try:
                         doc = DocxTemplate("template.docx")
                         doc.render({"PO_NUMBER": po_str, "INVOICE_NO": inv_str, "DATE": today_str})
