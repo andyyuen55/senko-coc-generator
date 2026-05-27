@@ -46,7 +46,6 @@ sh = init_gsheets()
 ws_main = sh.worksheet("main_products")
 ws_sub = sh.worksheet("sub_items")
 
-# 讀取資料轉為 DataFrame
 def get_main_df():
     records = ws_main.get_all_records()
     return pd.DataFrame(records) if records else pd.DataFrame(columns=["senko_pn", "description", "country"])
@@ -55,7 +54,6 @@ def get_sub_df():
     records = ws_sub.get_all_records()
     return pd.DataFrame(records) if records else pd.DataFrame(columns=["item_pn", "parent_senko_pn", "sub_desc", "sub_country"])
 
-# 寫回資料庫
 def write_df(ws, df):
     ws.clear()
     df = df.fillna("")
@@ -64,7 +62,7 @@ def write_df(ws, df):
 # ==========================================
 # 2. 網頁介面設定
 # ==========================================
-st.set_page_config(page_title="SENKO 報表生成系統 (GCP 雲端版)", layout="wide")
+st.set_page_config(page_title="SENKO 報表生成系統", layout="wide")
 st.title("📦 產品資料庫 & 自動化 COC 報表生成")
 
 tab1, tab2 = st.tabs(["🗂️ 資料庫管理", "📄 生成 COC 報表"])
@@ -79,47 +77,62 @@ with tab1:
         description = st.text_area("產品描述 (Description)")
         country = st.text_input("總型號原產地 (Country of Origin)", value="CHINA")
         
+        # ✨ 新增：防呆確認框
+        st.markdown("<br>", unsafe_allow_html=True)
+        overwrite_confirm = st.checkbox("⚠️ 我確認這是一筆舊資料，我要「修改/覆蓋」它")
+        
     with col2:
         st.info("💡 格式：`子項目型號 | 描述 | 產地` (可直接從 Excel 貼上)")
         sub_items_input = st.text_area("輸入子項目", height=150)
 
     if st.button("💾 儲存至雲端資料庫"):
         if senko_pn:
-            with st.spinner('正在同步至 Google Sheets...'):
+            with st.spinner('正在檢查並同步至 Google Sheets...'):
                 df_m = get_main_df()
                 df_s = get_sub_df()
                 
-                # 處理 Main (新增或覆蓋)
-                if not df_m.empty and senko_pn in df_m["senko_pn"].values:
-                    df_m.loc[df_m["senko_pn"] == senko_pn, ["description", "country"]] = [description, country]
+                # ✨ 新增：檢查是否重複
+                is_exist = not df_m.empty and senko_pn in df_m["senko_pn"].values
+                
+                # 如果重複了，且沒有勾選確認框，就擋下來報錯！
+                if is_exist and not overwrite_confirm:
+                    st.error(f"🛑 發現重複！資料庫中已經有「{senko_pn}」的資料了。\n如果您是想要更新這筆資料，請勾選上方的「⚠️ 我確認這是一筆舊資料...」再按儲存。")
                 else:
-                    new_m = pd.DataFrame([{"senko_pn": senko_pn, "description": description, "country": country}])
-                    df_m = pd.concat([df_m, new_m], ignore_index=True)
-                
-                # 處理 Sub (先刪除舊的，再加入新的)
-                if not df_s.empty:
-                    df_s = df_s[df_s["parent_senko_pn"] != senko_pn]
-                
-                new_subs = []
-                if sub_items_input:
-                    for line in sub_items_input.strip().split('\n'):
-                        if line.strip():
-                            parts = []
-                            if '\t' in line: parts = line.split('\t')
-                            elif '|' in line: parts = line.split('|')
-                            elif ',' in line: parts = line.split(',')
-                            else: parts = [line]
-                            while len(parts) < 3: parts.append("")
-                            ipn, sdesc, scountry = [p.strip() for p in parts[:3]]
-                            new_subs.append({"item_pn": ipn, "parent_senko_pn": senko_pn, "sub_desc": sdesc, "sub_country": scountry})
-                
-                if new_subs:
-                    df_s = pd.concat([df_s, pd.DataFrame(new_subs)], ignore_index=True)
-                
-                # 寫回 Google Sheets
-                write_df(ws_main, df_m)
-                write_df(ws_sub, df_s)
-                st.success(f"✅ 成功同步總型號：{senko_pn}")
+                    # 處理 Main (新增或覆蓋)
+                    if is_exist:
+                        df_m.loc[df_m["senko_pn"] == senko_pn, ["description", "country"]] = [description, country]
+                    else:
+                        new_m = pd.DataFrame([{"senko_pn": senko_pn, "description": description, "country": country}])
+                        df_m = pd.concat([df_m, new_m], ignore_index=True)
+                    
+                    # 處理 Sub (先刪除舊的，再加入新的)
+                    if not df_s.empty:
+                        df_s = df_s[df_s["parent_senko_pn"] != senko_pn]
+                    
+                    new_subs = []
+                    if sub_items_input:
+                        for line in sub_items_input.strip().split('\n'):
+                            if line.strip():
+                                parts = []
+                                if '\t' in line: parts = line.split('\t')
+                                elif '|' in line: parts = line.split('|')
+                                elif ',' in line: parts = line.split(',')
+                                else: parts = [line]
+                                while len(parts) < 3: parts.append("")
+                                ipn, sdesc, scountry = [p.strip() for p in parts[:3]]
+                                new_subs.append({"item_pn": ipn, "parent_senko_pn": senko_pn, "sub_desc": sdesc, "sub_country": scountry})
+                    
+                    if new_subs:
+                        df_s = pd.concat([df_s, pd.DataFrame(new_subs)], ignore_index=True)
+                    
+                    # 寫回 Google Sheets
+                    write_df(ws_main, df_m)
+                    write_df(ws_sub, df_s)
+                    
+                    if is_exist:
+                        st.success(f"🔄 成功更新舊型號：{senko_pn}")
+                    else:
+                        st.success(f"✅ 成功新增新型號：{senko_pn}")
         else:
             st.warning("請至少輸入總型號！")
 
@@ -197,12 +210,11 @@ with tab2:
                     else:
                         not_found_list.append(target_senko)
 
-                if not items_list:
-                    st.error(f"❌ 找不到型號！")
+                # ✨ 新增：強制更新提示鎖
+                if not_found_list:
+                    st.error(f"🛑 生成失敗！系統在資料庫中找不到以下型號：\n\n**{', '.join(not_found_list)}**\n\n👉 **請先前往「🗂️ 資料庫管理」分頁新增這些產品資料，然後再回來重新生成。**")
                 else:
-                    if not_found_list:
-                        st.warning(f"⚠️ 找不到並已忽略：{', '.join(not_found_list)}")
-                    
+                    # 只有在全部型號都找到的情況下，才會開始生成 Word 檔案
                     try:
                         doc = DocxTemplate("template.docx")
                         doc.render({"PO_NUMBER": po_str, "INVOICE_NO": inv_str, "DATE": today_str})
@@ -220,7 +232,7 @@ with tab2:
                         bio = io.BytesIO()
                         doc.save(bio)
                         
-                        file_n = f"COC_{senko_list[0]}_{today_str}.docx" if len(senko_list) == 1 and not not_found_list else f"COC_Multiple_Items_{today_str}.docx"
+                        file_n = f"COC_{senko_list[0]}_{today_str}.docx" if len(senko_list) == 1 else f"COC_Multiple_Items_{today_str}.docx"
 
                         st.success("🎉 檔案生成成功！")
                         st.download_button(label="📥 下載 COC Word 檔", data=bio.getvalue(), file_name=file_n, mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
