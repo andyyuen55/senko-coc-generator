@@ -65,98 +65,134 @@ def write_df(ws, df):
 st.set_page_config(page_title="SENKO 報表生成系統", layout="wide")
 st.title("📦 產品資料庫 & 自動化 COC 報表生成")
 
+# 初始化登入狀態
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+
 tab1, tab2 = st.tabs(["🗂️ 資料庫管理", "📄 生成 COC 報表"])
 
 # --- 分頁 1：資料庫管理 ---
 with tab1:
-    st.subheader("➕ 新增/修改產品資料")
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        senko_pn = st.text_input("總型號 (Senko PN)")
-        description = st.text_area("產品描述 (Description)")
-        country = st.text_input("總型號原產地 (Country of Origin)", value="CHINA")
+    # 判斷是否已登入
+    if not st.session_state.logged_in:
+        st.subheader("🔒 管理員登入")
+        st.info("請輸入密碼以解鎖資料庫新增、修改與刪除權限。")
         
-        # ✨ 新增：防呆確認框
-        st.markdown("<br>", unsafe_allow_html=True)
-        overwrite_confirm = st.checkbox("⚠️ 我確認這是一筆舊資料，我要「修改/覆蓋」它")
-        
-    with col2:
-        st.info("💡 格式：`子項目型號 | 描述 | 產地` (可直接從 Excel 貼上)")
-        sub_items_input = st.text_area("輸入子項目", height=150)
+        col_pwd, col_empty = st.columns([1, 2])
+        with col_pwd:
+            # 使用 type="password" 讓輸入的字變成隱藏的點點點
+            pwd_input = st.text_input("密碼", type="password")
+            if st.button("🔑 登入"):
+                try:
+                    correct_pwd = st.secrets["admin_password"]
+                    if pwd_input == correct_pwd:
+                        st.session_state.logged_in = True
+                        st.success("登入成功！")
+                        st.rerun() # 重新載入畫面
+                    else:
+                        st.error("密碼錯誤，請重新輸入。")
+                except KeyError:
+                    st.error("⚠️ 系統錯誤：尚未在 Streamlit Secrets 中設定 admin_password！")
+    else:
+        # ================= 已登入畫面開始 =================
+        col_title, col_logout = st.columns([4, 1])
+        with col_title:
+            st.subheader("➕ 新增/修改產品資料")
+        with col_logout:
+            if st.button("🚪 登出系統"):
+                st.session_state.logged_in = False
+                st.rerun()
+                
+        col1, col2 = st.columns(2)
+        with col1:
+            senko_pn = st.text_input("總型號 (Senko PN)")
+            description = st.text_area("產品描述 (Description)")
+            country = st.text_input("總型號原產地 (Country of Origin)", value="CHINA")
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            overwrite_confirm = st.checkbox("⚠️ 我確認這是一筆舊資料，我要「修改/覆蓋」它")
+            
+        with col2:
+            st.info("💡 格式：`子項目型號 | 描述 | 產地` (可直接從 Excel 貼上)")
+            sub_items_input = st.text_area("輸入子項目", height=150)
 
-    if st.button("💾 儲存至雲端資料庫"):
-        if senko_pn:
-            with st.spinner('正在檢查並同步至 Google Sheets...'):
+        if st.button("💾 儲存至雲端資料庫"):
+            if senko_pn:
+                with st.spinner('正在檢查並同步至 Google Sheets...'):
+                    df_m = get_main_df()
+                    df_s = get_sub_df()
+                    
+                    is_exist = not df_m.empty and senko_pn in df_m["senko_pn"].values
+                    
+                    if is_exist and not overwrite_confirm:
+                        st.error(f"🛑 發現重複！資料庫中已經有「{senko_pn}」的資料了。\n如果您是想要更新這筆資料，請勾選上方的「⚠️ 我確認這是一筆舊資料...」再按儲存。")
+                    else:
+                        if is_exist:
+                            df_m.loc[df_m["senko_pn"] == senko_pn, ["description", "country"]] = [description, country]
+                        else:
+                            new_m = pd.DataFrame([{"senko_pn": senko_pn, "description": description, "country": country}])
+                            df_m = pd.concat([df_m, new_m], ignore_index=True)
+                        
+                        if not df_s.empty:
+                            df_s = df_s[df_s["parent_senko_pn"] != senko_pn]
+                        
+                        new_subs = []
+                        if sub_items_input:
+                            for line in sub_items_input.strip().split('\n'):
+                                if line.strip():
+                                    parts = []
+                                    if '\t' in line: parts = line.split('\t')
+                                    elif '|' in line: parts = line.split('|')
+                                    elif ',' in line: parts = line.split(',')
+                                    else: parts = [line]
+                                    while len(parts) < 3: parts.append("")
+                                    ipn, sdesc, scountry = [p.strip() for p in parts[:3]]
+                                    new_subs.append({"item_pn": ipn, "parent_senko_pn": senko_pn, "sub_desc": sdesc, "sub_country": scountry})
+                        
+                        if new_subs:
+                            df_s = pd.concat([df_s, pd.DataFrame(new_subs)], ignore_index=True)
+                        
+                        write_df(ws_main, df_m)
+                        write_df(ws_sub, df_s)
+                        
+                        if is_exist:
+                            st.success(f"🔄 成功更新舊型號：{senko_pn}")
+                        else:
+                            st.success(f"✅ 成功新增新型號：{senko_pn}")
+            else:
+                st.warning("請至少輸入總型號！")
+
+        st.divider()
+        
+        st.subheader("📊 目前 Google 試算表資料概覽")
+        st.write("💡 提示：你現在可以直接打開 Google 試算表進行批次修改，網頁重整後會自動讀取最新資料！")
+        df_main = get_main_df()
+        
+        with st.expander("👀 點擊這裡展開 / 隱藏所有產品清單", expanded=False):
+            search_term = st.text_input("🔍 快速搜尋總型號 (Senko PN):", "")
+            if search_term.strip():
+                filtered_df = df_main[df_main["senko_pn"].astype(str).str.contains(search_term.strip(), case=False, na=False)]
+                if filtered_df.empty:
+                    st.warning("找不到符合的型號。")
+                else:
+                    st.table(filtered_df)
+            else:
+                st.table(df_main) 
+
+        st.subheader("🗑️ 刪除產品資料")
+        all_senko = ["(請選擇要刪除的型號)"] + df_main["senko_pn"].tolist() if not df_main.empty else ["(無資料)"]
+        del_target = st.selectbox("選擇要刪除的總型號", all_senko)
+        if st.button("❌ 刪除此產品") and del_target != "(請選擇要刪除的型號)":
+            with st.spinner('刪除中...'):
                 df_m = get_main_df()
                 df_s = get_sub_df()
-                
-                # ✨ 新增：檢查是否重複
-                is_exist = not df_m.empty and senko_pn in df_m["senko_pn"].values
-                
-                # 如果重複了，且沒有勾選確認框，就擋下來報錯！
-                if is_exist and not overwrite_confirm:
-                    st.error(f"🛑 發現重複！資料庫中已經有「{senko_pn}」的資料了。\n如果您是想要更新這筆資料，請勾選上方的「⚠️ 我確認這是一筆舊資料...」再按儲存。")
-                else:
-                    # 處理 Main (新增或覆蓋)
-                    if is_exist:
-                        df_m.loc[df_m["senko_pn"] == senko_pn, ["description", "country"]] = [description, country]
-                    else:
-                        new_m = pd.DataFrame([{"senko_pn": senko_pn, "description": description, "country": country}])
-                        df_m = pd.concat([df_m, new_m], ignore_index=True)
-                    
-                    # 處理 Sub (先刪除舊的，再加入新的)
-                    if not df_s.empty:
-                        df_s = df_s[df_s["parent_senko_pn"] != senko_pn]
-                    
-                    new_subs = []
-                    if sub_items_input:
-                        for line in sub_items_input.strip().split('\n'):
-                            if line.strip():
-                                parts = []
-                                if '\t' in line: parts = line.split('\t')
-                                elif '|' in line: parts = line.split('|')
-                                elif ',' in line: parts = line.split(',')
-                                else: parts = [line]
-                                while len(parts) < 3: parts.append("")
-                                ipn, sdesc, scountry = [p.strip() for p in parts[:3]]
-                                new_subs.append({"item_pn": ipn, "parent_senko_pn": senko_pn, "sub_desc": sdesc, "sub_country": scountry})
-                    
-                    if new_subs:
-                        df_s = pd.concat([df_s, pd.DataFrame(new_subs)], ignore_index=True)
-                    
-                    # 寫回 Google Sheets
-                    write_df(ws_main, df_m)
-                    write_df(ws_sub, df_s)
-                    
-                    if is_exist:
-                        st.success(f"🔄 成功更新舊型號：{senko_pn}")
-                    else:
-                        st.success(f"✅ 成功新增新型號：{senko_pn}")
-        else:
-            st.warning("請至少輸入總型號！")
-
-    st.divider()
-    
-    st.subheader("📊 目前 Google 試算表資料概覽")
-    st.write("💡 提示：你現在可以直接打開 Google 試算表進行批次修改，網頁重整後會自動讀取最新資料！")
-    df_main = get_main_df()
-    
-    # ✨ 升級：使用 Expander (折疊區塊) 將龐大的表格收納起來
-    with st.expander("👀 點擊這裡展開 / 隱藏所有產品清單", expanded=False):
-        # ✨ 升級：加入快速搜尋功能
-        search_term = st.text_input("🔍 快速搜尋總型號 (Senko PN):", "")
-        
-        if search_term.strip():
-            # 如果有輸入字，就只顯示包含該關鍵字的型號
-            filtered_df = df_main[df_main["senko_pn"].astype(str).str.contains(search_term.strip(), case=False, na=False)]
-            if filtered_df.empty:
-                st.warning("找不到符合的型號。")
-            else:
-                st.table(filtered_df)
-        else:
-            # 如果搜尋框是空的，就顯示全部表格
-            st.table(df_main)
+                df_m = df_m[df_m["senko_pn"] != del_target]
+                df_s = df_s[df_s["parent_senko_pn"] != del_target]
+                write_df(ws_main, df_m)
+                write_df(ws_sub, df_s)
+                st.success("🗑️ 產品已刪除！")
+                st.rerun()
+        # ================= 已登入畫面結束 =================
 
 # --- 分頁 2：生成 COC 報表 ---
 with tab2:
@@ -179,7 +215,6 @@ with tab2:
                 inv_str = ", ".join([i.strip() for i in invoice_input.split('\n') if i.strip()])
                 today_str = datetime.now().strftime("%d-%b-%Y").upper()
 
-                # ✨ 升級 1：將輸入的搜尋型號「去除頭尾空白」並「強制轉大寫」
                 senko_list = [str(s).strip().upper() for s in target_senko_input.strip().split('\n') if str(s).strip()]
                 
                 df_m = get_main_df()
@@ -188,7 +223,6 @@ with tab2:
                 items_list = []
                 not_found_list = []
 
-                # 準備乾淨的比對資料庫 (不改變原始資料，只在背景做轉換比對)
                 if not df_m.empty:
                     db_m_clean = df_m["senko_pn"].astype(str).str.strip().str.upper()
                 else:
@@ -200,12 +234,11 @@ with tab2:
                     db_s_clean = pd.Series([], dtype=str)
 
                 for target_senko in senko_list:
-                    # ✨ 升級 2：使用乾淨無空白的字串進行比對
                     main_match = df_m[db_m_clean == target_senko]
                     
                     if not main_match.empty:
                         m_row = main_match.iloc[0]
-                        m_senko = str(m_row["senko_pn"]) # 寫入 Word 時，依然保留你最原本輸入的樣子
+                        m_senko = str(m_row["senko_pn"])
                         m_desc = str(m_row["description"])
                         m_country = str(m_row["country"])
                         
@@ -224,7 +257,6 @@ with tab2:
                                 "senko_pn": m_senko, "item_pn": "", "description": m_desc, "country": m_country
                             })
                     else:
-                        # 紀錄使用者原本輸入的字樣，方便除錯
                         original_input_senko = target_senko_input.strip().split('\n')[senko_list.index(target_senko)]
                         not_found_list.append(original_input_senko)
 
