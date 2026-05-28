@@ -1,0 +1,15 @@
+[theme]
+# 主要強調色 (按鈕、進度條、勾選框)，選用溫暖的焦糖橘棕色
+primaryColor = "#D4A373"
+
+# 網頁主要背景色 (柔和的奶油米黃色)
+backgroundColor = "#FEFAE0"
+
+# 次要背景色 (側邊欄、折疊區塊、輸入框的底色)，選用稍微深一點的燕麥色來製造層次感
+secondaryBackgroundColor = "#FAEDCD"
+
+# 文字顏色 (深咖啡色，比純黑色看起來更柔和且護眼)
+textColor = "#432818"
+
+# 系統字體 (保持乾淨簡約的無襯線字體)
+font = "sans serif"
