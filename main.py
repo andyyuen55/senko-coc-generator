@@ -65,22 +65,24 @@ def write_df(ws, df):
 st.set_page_config(page_title="SENKO 報表生成系統", layout="wide")
 st.title("📦 產品資料庫 & 自動化 COC 報表生成")
 
-# 初始化登入狀態
+# 初始化所有的 Session State (包含登入狀態與自動填寫欄位)
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
+if "auto_senko" not in st.session_state:
+    st.session_state.auto_senko = ""
+if "auto_po" not in st.session_state:
+    st.session_state.auto_po = ""
 
 tab1, tab2 = st.tabs(["🗂️ 資料庫管理", "📄 生成 COC 報表"])
 
 # --- 分頁 1：資料庫管理 ---
 with tab1:
-    # 判斷是否已登入
     if not st.session_state.logged_in:
         st.subheader("🔒 管理員登入")
         st.info("請輸入密碼以解鎖資料庫新增、修改與刪除權限。")
         
         col_pwd, col_empty = st.columns([1, 2])
         with col_pwd:
-            # 使用 type="password" 讓輸入的字變成隱藏的點點點
             pwd_input = st.text_input("密碼", type="password")
             if st.button("🔑 登入"):
                 try:
@@ -88,13 +90,12 @@ with tab1:
                     if pwd_input == correct_pwd:
                         st.session_state.logged_in = True
                         st.success("登入成功！")
-                        st.rerun() # 重新載入畫面
+                        st.rerun() 
                     else:
                         st.error("密碼錯誤，請重新輸入。")
                 except KeyError:
                     st.error("⚠️ 系統錯誤：尚未在 Streamlit Secrets 中設定 admin_password！")
     else:
-        # ================= 已登入畫面開始 =================
         col_title, col_logout = st.columns([4, 1])
         with col_title:
             st.subheader("➕ 新增/修改產品資料")
@@ -192,17 +193,54 @@ with tab1:
                 write_df(ws_sub, df_s)
                 st.success("🗑️ 產品已刪除！")
                 st.rerun()
-        # ================= 已登入畫面結束 =================
 
 # --- 分頁 2：生成 COC 報表 ---
 with tab2:
     st.subheader("🚀 一鍵生成 Word 文件 (支援多型號合併)")
     
+    # ✨ 全新功能：智能 Excel 解析區塊
+    with st.expander("✨ 智能 Excel 解析器 (可直接從出貨單複製貼上)", expanded=True):
+        st.info("💡 提示：直接從 Excel 框選內容（需包含 `Customer PO #` 與 `Senko P/N` 標題列），然後貼在下方：")
+        raw_excel = st.text_area("📋 貼上 Excel 內容", height=150)
+        
+        if st.button("🛠️ 自動清洗並填入下方欄位"):
+            if raw_excel.strip():
+                try:
+                    # 讓 pandas 將貼上的純文字視為以 Tab 分隔的表格
+                    df_paste = pd.read_csv(io.StringIO(raw_excel), sep='\t')
+                    
+                    # 模糊尋找對應的欄位名稱 (容許一點大小寫差異)
+                    po_col = next((c for c in df_paste.columns if "PO" in str(c).upper()), None)
+                    senko_col = next((c for c in df_paste.columns if "SENKO" in str(c).upper() or "P/N" in str(c).upper()), None)
+                    
+                    if po_col and senko_col:
+                        # 1. 萃取 PO，去除空白與重複值
+                        pos = df_paste[po_col].dropna().astype(str).str.strip().unique()
+                        
+                        # 2. 萃取 Senko P/N，用 '*' 切割保留前半段，去除空白與重複值
+                        senkos = df_paste[senko_col].dropna().astype(str).apply(lambda x: x.split('*')[0].strip()).unique()
+                        
+                        # 將清洗好的資料寫入 session_state
+                        st.session_state.auto_po = "\n".join(pos)
+                        st.session_state.auto_senko = "\n".join(senkos)
+                        
+                        st.success("✅ 擷取並清洗成功！資料已自動填入下方的輸入框。")
+                    else:
+                        st.error("⚠️ 找不到對應的標題列。請確認複製的範圍有包含 `Customer PO #` 與 `Senko P/N`。")
+                except Exception as e:
+                    st.error(f"解析失敗，請確認貼上的是標準的表格格式。錯誤訊息: {e}")
+            else:
+                st.warning("請先貼上 Excel 資料！")
+    
+    st.divider()
+    
     col3, col4 = st.columns(2)
     with col3:
-        target_senko_input = st.text_area("🔍 輸入要生成的總型號 (Senko PN) [可多行]", height=150)
+        # 綁定 key，讓上面的按鈕可以自動更新這裡的值
+        target_senko_input = st.text_area("🔍 輸入要生成的總型號 (Senko PN) [可多行]", key="auto_senko", height=150)
     with col4:
-        po_input = st.text_area("📋 貼上 PO Number", height=68)
+        # 綁定 key，自動填入 PO
+        po_input = st.text_area("📋 貼上 PO Number", key="auto_po", height=68)
         invoice_input = st.text_area("📋 貼上 INVOICE NO (必填！)", height=68)
         
     can_generate = bool(invoice_input.strip())
