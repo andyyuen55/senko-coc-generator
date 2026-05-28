@@ -65,7 +65,7 @@ def write_df(ws, df):
 st.set_page_config(page_title="SENKO 報表生成系統", layout="wide")
 st.title("📦 產品資料庫 & 自動化 COC 報表生成")
 
-# 初始化所有的 Session State (包含登入狀態與自動填寫欄位)
+# 初始化所有的 Session State
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if "auto_senko" not in st.session_state:
@@ -198,7 +198,6 @@ with tab1:
 with tab2:
     st.subheader("🚀 一鍵生成 Word 文件 (支援多型號合併)")
     
-    # ✨ 全新功能：智能 Excel 解析區塊
     with st.expander("✨ 智能 Excel 解析器 (可直接從出貨單複製貼上)", expanded=True):
         st.info("💡 提示：直接從 Excel 框選內容（需包含 `Customer PO #` 與 `Senko P/N` 標題列），然後貼在下方：")
         raw_excel = st.text_area("📋 貼上 Excel 內容", height=150)
@@ -206,21 +205,18 @@ with tab2:
         if st.button("🛠️ 自動清洗並填入下方欄位"):
             if raw_excel.strip():
                 try:
-                    # 讓 pandas 將貼上的純文字視為以 Tab 分隔的表格
-                    df_paste = pd.read_csv(io.StringIO(raw_excel), sep='\t')
+                    # ✨ 升級 1：加入 dtype=str 強制把所有內容當成純文字讀取，防止系統自作聰明變成小數點
+                    df_paste = pd.read_csv(io.StringIO(raw_excel), sep='\t', dtype=str)
                     
-                    # 模糊尋找對應的欄位名稱 (容許一點大小寫差異)
                     po_col = next((c for c in df_paste.columns if "PO" in str(c).upper()), None)
                     senko_col = next((c for c in df_paste.columns if "SENKO" in str(c).upper() or "P/N" in str(c).upper()), None)
                     
                     if po_col and senko_col:
-                        # 1. 萃取 PO，去除空白與重複值
-                        pos = df_paste[po_col].dropna().astype(str).str.strip().unique()
+                        # ✨ 升級 2：除了純文字讀取，再加上正則表達式強制刪除結尾可能存在的 .0
+                        pos = df_paste[po_col].dropna().astype(str).str.strip().str.replace(r'\.0$', '', regex=True).unique()
                         
-                        # 2. 萃取 Senko P/N，用 '*' 切割保留前半段，去除空白與重複值
                         senkos = df_paste[senko_col].dropna().astype(str).apply(lambda x: x.split('*')[0].strip()).unique()
                         
-                        # 將清洗好的資料寫入 session_state
                         st.session_state.auto_po = "\n".join(pos)
                         st.session_state.auto_senko = "\n".join(senkos)
                         
@@ -236,10 +232,8 @@ with tab2:
     
     col3, col4 = st.columns(2)
     with col3:
-        # 綁定 key，讓上面的按鈕可以自動更新這裡的值
         target_senko_input = st.text_area("🔍 輸入要生成的總型號 (Senko PN) [可多行]", key="auto_senko", height=150)
     with col4:
-        # 綁定 key，自動填入 PO
         po_input = st.text_area("📋 貼上 PO Number", key="auto_po", height=68)
         invoice_input = st.text_area("📋 貼上 INVOICE NO (必填！)", height=68)
         
