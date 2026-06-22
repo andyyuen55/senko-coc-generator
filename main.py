@@ -65,7 +65,6 @@ def write_df(ws, df):
 st.set_page_config(page_title="SENKO 報表生成系統", layout="wide")
 st.title("📦 產品資料庫 & 自動化 COC 報表生成")
 
-# 初始化所有的 Session State
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if "auto_senko" not in st.session_state:
@@ -205,17 +204,16 @@ with tab2:
         if st.button("🛠️ 自動清洗並填入下方欄位"):
             if raw_excel.strip():
                 try:
-                    # ✨ 升級 1：加入 dtype=str 強制把所有內容當成純文字讀取，防止系統自作聰明變成小數點
                     df_paste = pd.read_csv(io.StringIO(raw_excel), sep='\t', dtype=str)
                     
                     po_col = next((c for c in df_paste.columns if "PO" in str(c).upper()), None)
                     senko_col = next((c for c in df_paste.columns if "SENKO" in str(c).upper() or "P/N" in str(c).upper()), None)
                     
                     if po_col and senko_col:
-                        # ✨ 升級 2：除了純文字讀取，再加上正則表達式強制刪除結尾可能存在的 .0
                         pos = df_paste[po_col].dropna().astype(str).str.strip().str.replace(r'\.0$', '', regex=True).unique()
                         
-                        senkos = df_paste[senko_col].dropna().astype(str).apply(lambda x: x.split('*')[0].strip()).unique()
+                        # ✨ 關鍵升級：使用 regex 刪除 * 到 + 之間的字元，但保留 + 號與之後的所有內容
+                        senkos = df_paste[senko_col].dropna().astype(str).str.replace(r'\*[^+]*', '', regex=True).str.strip().unique()
                         
                         st.session_state.auto_po = "\n".join(pos)
                         st.session_state.auto_senko = "\n".join(senkos)
