@@ -78,7 +78,7 @@ if "auto_po" not in st.session_state: st.session_state.auto_po = ""
 
 tab1, tab2, tab3 = st.tabs(["🗂️ 產品資料庫管理", "📄 生成 COC 報表", "📦 生成 SHIPMENT SOP"])
 
-# --- 分頁 1 & 2 保持原樣 (省略大部分防佔版面，與之前完全相同) ---
+# --- 分頁 1：產品資料庫管理 ---
 with tab1:
     if not st.session_state.logged_in:
         st.subheader("🔒 管理員登入")
@@ -136,6 +136,7 @@ with tab1:
             if search_term.strip(): st.table(df_main[df_main["senko_pn"].astype(str).str.contains(search_term.strip(), case=False, na=False)])
             else: st.table(df_main)
 
+# --- 分頁 2：生成 COC 報表 ---
 with tab2:
     st.subheader("🚀 一鍵生成 Word 文件 (支援多型號合併)")
     with st.expander("✨ 智能 Excel 解析器 (可直接從出貨單複製貼上)", expanded=False):
@@ -195,14 +196,17 @@ with tab2:
                         st.download_button("📥 下載 COC Word 檔", data=bio.getvalue(), file_name=f"COC_{senko_list[0]}_{today_str}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
                     except Exception as e: st.error(f"生成失敗: {e}")
 
-# --- ✨ 分頁 3：生成 SHIPMENT SOP (多圖上傳解鎖版) ---
+# --- 分頁 3：生成 SHIPMENT SOP ---
 with tab3:
     st.subheader("📦 客戶出貨標準作業程序 (SHIPMENT SOP) 管理")
     df_sop = get_sop_df()
     c_id = st.text_input("1. 🔑 請輸入 CUSTOMER ID (大寫)", "").strip().upper()
     
+    # ✨ 核心升級：加入「多重條件/自訂」的記憶解析
+    ship_type_radio = "單一快遞"
     old_ship_method = "FEDEX"
     old_acc_no, old_tax_no, old_fw_name, old_fw_email, old_fw_tel = "", "", "", "", ""
+    old_custom_text = ""
     
     exist_row = df_sop[df_sop["customer_id"].astype(str).str.upper() == c_id].iloc[0] if (not df_sop.empty and c_id in df_sop["customer_id"].astype(str).str.upper().values) else None
     
@@ -213,16 +217,26 @@ with tab3:
         old_notes = str(exist_row["shipping_notes"])
         old_sales, old_main_c, old_backup_c = str(exist_row["responsible_sales"]), str(exist_row["main_contact"]), str(exist_row["backup_contact"])
         
-        old_method_str = str(exist_row["shipping_method_info"])
-        for line in old_method_str.split('\n'):
-            if line.startswith("出貨管道: "): 
-                parsed_method = line.replace("出貨管道: ", "").strip()
-                old_ship_method = "FORWARDER (貨代形式/自取)" if parsed_method == "貨代自取" else parsed_method
-            elif line.startswith("運費帳號: "): old_acc_no = line.replace("運費帳號: ", "").strip()
-            elif line.startswith("稅金帳號: "): old_tax_no = line.replace("稅金帳號: ", "").strip()
-            elif line.startswith("聯絡人: "): old_fw_name = line.replace("聯絡人: ", "").strip()
-            elif line.startswith("EMAIL: "): old_fw_email = line.replace("EMAIL: ", "").strip()
-            elif line.startswith("TEL: "): old_fw_tel = line.replace("TEL: ", "").strip()
+        old_method_str = str(exist_row["shipping_method_info"]).strip()
+        if old_method_str.startswith("出貨管道: "):
+            lines = old_method_str.split('\n')
+            parsed_method = lines[0].replace("出貨管道: ", "").strip()
+            if parsed_method == "貨代自取":
+                ship_type_radio = "貨代自取"
+            else:
+                ship_type_radio = "單一快遞"
+                old_ship_method = parsed_method
+                
+            for line in lines[1:]:
+                if line.startswith("運費帳號: "): old_acc_no = line.replace("運費帳號: ", "").strip()
+                elif line.startswith("稅金帳號: "): old_tax_no = line.replace("稅金帳號: ", "").strip()
+                elif line.startswith("聯絡人: "): old_fw_name = line.replace("聯絡人: ", "").strip()
+                elif line.startswith("EMAIL: "): old_fw_email = line.replace("EMAIL: ", "").strip()
+                elif line.startswith("TEL: "): old_fw_tel = line.replace("TEL: ", "").strip()
+        elif old_method_str != "":
+            # 如果沒有「出貨管道」的標準開頭，就判定為自訂的複雜條件
+            ship_type_radio = "多種條件 / 待備貨後決定 (自訂)"
+            old_custom_text = old_method_str
     else:
         old_docs, old_labels, old_notes, old_sales, old_main_c, old_backup_c = [], [], "", "", "", ""
 
@@ -238,35 +252,43 @@ with tab3:
         label_options = ["DESC", "PN", "QTY", "CUSTOMER PO", "CUSTOMER PN", "COO", "CARTON NO"]
         selected_labels = [lbl for lbl in label_options if st.checkbox(lbl, value=(lbl in old_labels), key=f"lbl_{lbl}")]
         
-        # ✨ 關鍵升級：加入 accept_multiple_files=True，解鎖多張圖片上傳！
         uploaded_label_imgs = st.file_uploader("🖼️ 上傳 LABEL 標籤參考圖 (支援一次拖拉多張 / PNG / JPG)", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
         if uploaded_label_imgs:
             for img in uploaded_label_imgs:
-                st.image(img, caption=img.name, width=200) # 在網頁上預覽每一張圖片
+                st.image(img, caption=img.name, width=200) 
         
     with col_sop2:
         shipping_notes = st.text_area("4. 📝 出貨注意事項 (可直接貼上)", value=old_notes, height=120)
         
-        # ✨ 關鍵升級：加入 accept_multiple_files=True
         uploaded_notes_imgs = st.file_uploader("🖼️ 上傳注意事項輔助圖 (支援一次拖拉多張 / 例如打板方式)", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
         if uploaded_notes_imgs:
             for img in uploaded_notes_imgs:
                 st.image(img, caption=img.name, width=200)
             
         st.markdown("**5. 出貨方式設定**")
-        method_list = ["FEDEX", "UPS", "DHL", "SF", "FORWARDER (貨代形式/自取)"]
-        default_index = method_list.index(old_ship_method) if old_ship_method in method_list else 0
-        ship_method = st.selectbox("選擇出貨管道", method_list, index=default_index)
         
-        if ship_method != "FORWARDER (貨代形式/自取)":
+        # ✨ 升級版UI：出貨情境選擇器
+        ship_type = st.radio("選擇出貨情境", ["單一快遞", "貨代自取", "多種條件 / 待備貨後決定 (自訂)"], 
+                             index=["單一快遞", "貨代自取", "多種條件 / 待備貨後決定 (自訂)"].index(ship_type_radio), horizontal=True)
+        
+        if ship_type == "單一快遞":
+            method_list = ["FEDEX", "UPS", "DHL", "SF"]
+            default_index = method_list.index(old_ship_method) if old_ship_method in method_list else 0
+            ship_method = st.selectbox("快遞公司", method_list, index=default_index)
             acc_no = st.text_input("運費付款 ACCOUNT", value=old_acc_no)
             tax_no = st.text_input("TAX 付款 ACCOUNT", value=old_tax_no)
             method_info_str = f"出貨管道: {ship_method}\n運費帳號: {acc_no}\n稅金帳號: {tax_no}"
-        else:
+            
+        elif ship_type == "貨代自取":
             fw_name = st.text_input("貨代聯絡人姓名", value=old_fw_name)
             fw_email = st.text_input("貨代 EMAIL", value=old_fw_email)
             fw_tel = st.text_input("貨代 TEL", value=old_fw_tel)
             method_info_str = f"出貨管道: 貨代自取\n聯絡人: {fw_name}\nEMAIL: {fw_email}\nTEL: {fw_tel}"
+            
+        else:
+            # ✨ 當選擇第三種時，開啟無限自由度的文字框
+            custom_note = st.text_area("✍️ 請描述詳細出貨條件 (例如: 45kg以下用Fedex帳號1234，超重待通知 / 待提供重量尺寸後決定)", value=old_custom_text, height=150)
+            method_info_str = custom_note
 
     st.divider()
     st.markdown("**6. 內部與客戶對接窗口人員**")
@@ -301,7 +323,6 @@ with tab3:
                     doc_sop = DocxTemplate("sop_template.docx")
                     today_sop_str = datetime.now().strftime("%d-%b-%Y").upper()
                     
-                    # ✨ 核心處理：把上傳的「所有圖片」變成一個陣列，排隊塞進 Word！
                     label_img_objs = []
                     if uploaded_label_imgs:
                         for img in uploaded_label_imgs:
@@ -331,8 +352,8 @@ with tab3:
                         "MAIN_CONTACT": main_contact if main_contact.strip() else "未指定",
                         "BACKUP_CONTACT": backup_contact if backup_contact.strip() else "未指定",
                         "RESPONSIBLE_SALES": responsible_sales if responsible_sales.strip() else "未指定",
-                        "LABEL_IMAGES": label_img_objs,  # ✨ 傳遞圖片陣列
-                        "NOTES_IMAGES": notes_img_objs   # ✨ 傳遞圖片陣列
+                        "LABEL_IMAGES": label_img_objs,  
+                        "NOTES_IMAGES": notes_img_objs   
                     }
                     
                     doc_sop.render(sop_context)
