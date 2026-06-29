@@ -206,8 +206,7 @@ with tab3:
     old_ship_method = "FEDEX"
     old_acc_no, old_tax_no, old_fw_name, old_fw_email, old_fw_tel, old_custom_text = "", "", "", "", "", ""
     
-    # 預設為 (未指定) 狀態
-    old_sales, old_main_c, old_backup_c = "(未指定)", "(未指定)", "(未指定)"
+    old_main_list, old_backup_list, old_sales_list = [], [], []
     
     exist_row = df_sop[df_sop["customer_id"].astype(str).str.upper() == c_id].iloc[0] if (not df_sop.empty and c_id in df_sop["customer_id"].astype(str).str.upper().values) else None
     
@@ -217,13 +216,13 @@ with tab3:
         old_labels = [l.strip() for l in str(exist_row["label_formats"]).split(",") if l.strip()]
         old_notes = str(exist_row["shipping_notes"])
         
-        # 讀取人員，若是空的就填上 "(未指定)"
+        # ✨ 將舊資料按逗號切開，變成陣列以支援多選
         m_c = str(exist_row["main_contact"]).strip()
         b_c = str(exist_row["backup_contact"]).strip()
         s_c = str(exist_row["responsible_sales"]).strip()
-        old_main_c = m_c if m_c else "(未指定)"
-        old_backup_c = b_c if b_c else "(未指定)"
-        old_sales = s_c if s_c else "(未指定)"
+        old_main_list = [s.strip() for s in m_c.split(',')] if m_c and m_c != "(未指定)" else []
+        old_backup_list = [s.strip() for s in b_c.split(',')] if b_c and b_c != "(未指定)" else []
+        old_sales_list = [s.strip() for s in s_c.split(',')] if s_c and s_c != "(未指定)" else []
         
         old_method_str = str(exist_row["shipping_method_info"]).strip()
         if old_method_str.startswith("出貨管道: "):
@@ -296,40 +295,45 @@ with tab3:
             method_info_str = custom_note
 
     st.divider()
-    st.markdown("**6. 內部與客戶對接窗口人員 (支援自動記憶)**")
+    st.markdown("**6. 內部與客戶對接窗口人員 (支援多選與自動記憶)**")
     
-    # ✨ 核心升級：自動收集曾輸入過的所有人員名單
+    # ✨ 核心升級：抓取歷史紀錄，切割成獨立人名放入選項
     all_staff = set()
     if not df_sop.empty:
         for col in ["main_contact", "backup_contact", "responsible_sales"]:
             if col in df_sop.columns:
                 for val in df_sop[col].dropna().astype(str).unique():
-                    if val.strip() and val.strip() != "(未指定)":
-                        all_staff.add(val.strip())
-                        
-    staff_options = ["(未指定)"] + sorted(list(all_staff)) + ["➕ 手動輸入新人員..."]
+                    for name in val.split(','):
+                        clean_name = name.strip()
+                        if clean_name and clean_name != "(未指定)":
+                            all_staff.add(clean_name)
+                            
+    staff_options = sorted(list(all_staff))
     
     col_p1, col_p2, col_p3 = st.columns(3)
     
-    # 共用的選單產生器函數
-    def render_staff_select(label, old_val, key_prefix):
-        default_idx = staff_options.index(old_val) if old_val in staff_options else 0
-        if old_val and old_val not in staff_options:
-            default_idx = len(staff_options) - 1 # 指向「手動輸入新人員...」
-            
-        selected = st.selectbox(label, staff_options, index=default_idx, key=f"sel_{key_prefix}")
-        
-        if selected == "➕ 手動輸入新人員...":
-            # 如果選了新增，就彈出一個文字框給他自己打字
-            return st.text_input(f"✍️ 輸入新的 {label}", value=old_val if old_val not in staff_options else "", key=f"txt_{key_prefix}")
-        elif selected == "(未指定)":
-            return ""
-        else:
-            return selected
+    # 建立多選與手動新增功能的區塊
+    with col_p1: 
+        valid_mains = [s for s in old_main_list if s in staff_options]
+        sel_mains = st.multiselect("👥 主要負責同事 (可多選)", staff_options, default=valid_mains)
+        new_main = st.text_input("➕ 手動補充 (如有兩人請用逗號分隔)", "", key="new_m")
+        # 合併選項與手動輸入的人員
+        final_mains = sel_mains + ([s.strip() for s in new_main.split(',')] if new_main.strip() else [])
+        main_contact = ", ".join(final_mains) if final_mains else "(未指定)"
 
-    with col_p1: main_contact = render_staff_select("CUSTOMER 主要負責同事", old_main_c, "main")
-    with col_p2: backup_contact = render_staff_select("BACKUP 同事名稱", old_backup_c, "backup")
-    with col_p3: responsible_sales = render_staff_select("CUSTOMER 主要負責 SALES", old_sales, "sales")
+    with col_p2: 
+        valid_backups = [s for s in old_backup_list if s in staff_options]
+        sel_backups = st.multiselect("👥 BACKUP 同事 (可多選)", staff_options, default=valid_backups)
+        new_backup = st.text_input("➕ 手動補充", "", key="new_b")
+        final_backups = sel_backups + ([s.strip() for s in new_backup.split(',')] if new_backup.strip() else [])
+        backup_contact = ", ".join(final_backups) if final_backups else "(未指定)"
+
+    with col_p3: 
+        valid_sales = [s for s in old_sales_list if s in staff_options]
+        sel_sales = st.multiselect("👥 負責 SALES (可多選)", staff_options, default=valid_sales)
+        new_sales = st.text_input("➕ 手動補充", "", key="new_s")
+        final_sales = sel_sales + ([s.strip() for s in new_sales.split(',')] if new_sales.strip() else [])
+        responsible_sales = ", ".join(final_sales) if final_sales else "(未指定)"
 
     st.markdown("<br>", unsafe_allow_html=True)
     col_btn1, col_btn2 = st.columns(2)
