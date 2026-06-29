@@ -202,11 +202,12 @@ with tab3:
     df_sop = get_sop_df()
     c_id = st.text_input("1. 🔑 請輸入 CUSTOMER ID (大寫)", "").strip().upper()
     
-    # ✨ 核心升級：加入「多重條件/自訂」的記憶解析
     ship_type_radio = "單一快遞"
     old_ship_method = "FEDEX"
-    old_acc_no, old_tax_no, old_fw_name, old_fw_email, old_fw_tel = "", "", "", "", ""
-    old_custom_text = ""
+    old_acc_no, old_tax_no, old_fw_name, old_fw_email, old_fw_tel, old_custom_text = "", "", "", "", "", ""
+    
+    # 預設為 (未指定) 狀態
+    old_sales, old_main_c, old_backup_c = "(未指定)", "(未指定)", "(未指定)"
     
     exist_row = df_sop[df_sop["customer_id"].astype(str).str.upper() == c_id].iloc[0] if (not df_sop.empty and c_id in df_sop["customer_id"].astype(str).str.upper().values) else None
     
@@ -215,7 +216,14 @@ with tab3:
         old_docs = [d.strip() for d in str(exist_row["required_docs"]).split(",") if d.strip()]
         old_labels = [l.strip() for l in str(exist_row["label_formats"]).split(",") if l.strip()]
         old_notes = str(exist_row["shipping_notes"])
-        old_sales, old_main_c, old_backup_c = str(exist_row["responsible_sales"]), str(exist_row["main_contact"]), str(exist_row["backup_contact"])
+        
+        # 讀取人員，若是空的就填上 "(未指定)"
+        m_c = str(exist_row["main_contact"]).strip()
+        b_c = str(exist_row["backup_contact"]).strip()
+        s_c = str(exist_row["responsible_sales"]).strip()
+        old_main_c = m_c if m_c else "(未指定)"
+        old_backup_c = b_c if b_c else "(未指定)"
+        old_sales = s_c if s_c else "(未指定)"
         
         old_method_str = str(exist_row["shipping_method_info"]).strip()
         if old_method_str.startswith("出貨管道: "):
@@ -234,11 +242,10 @@ with tab3:
                 elif line.startswith("EMAIL: "): old_fw_email = line.replace("EMAIL: ", "").strip()
                 elif line.startswith("TEL: "): old_fw_tel = line.replace("TEL: ", "").strip()
         elif old_method_str != "":
-            # 如果沒有「出貨管道」的標準開頭，就判定為自訂的複雜條件
             ship_type_radio = "多種條件 / 待備貨後決定 (自訂)"
             old_custom_text = old_method_str
     else:
-        old_docs, old_labels, old_notes, old_sales, old_main_c, old_backup_c = [], [], "", "", "", ""
+        old_docs, old_labels, old_notes = [], [], ""
 
     st.divider()
     col_sop1, col_sop2 = st.columns(2)
@@ -267,7 +274,6 @@ with tab3:
             
         st.markdown("**5. 出貨方式設定**")
         
-        # ✨ 升級版UI：出貨情境選擇器
         ship_type = st.radio("選擇出貨情境", ["單一快遞", "貨代自取", "多種條件 / 待備貨後決定 (自訂)"], 
                              index=["單一快遞", "貨代自取", "多種條件 / 待備貨後決定 (自訂)"].index(ship_type_radio), horizontal=True)
         
@@ -286,16 +292,44 @@ with tab3:
             method_info_str = f"出貨管道: 貨代自取\n聯絡人: {fw_name}\nEMAIL: {fw_email}\nTEL: {fw_tel}"
             
         else:
-            # ✨ 當選擇第三種時，開啟無限自由度的文字框
             custom_note = st.text_area("✍️ 請描述詳細出貨條件 (例如: 45kg以下用Fedex帳號1234，超重待通知 / 待提供重量尺寸後決定)", value=old_custom_text, height=150)
             method_info_str = custom_note
 
     st.divider()
-    st.markdown("**6. 內部與客戶對接窗口人員**")
+    st.markdown("**6. 內部與客戶對接窗口人員 (支援自動記憶)**")
+    
+    # ✨ 核心升級：自動收集曾輸入過的所有人員名單
+    all_staff = set()
+    if not df_sop.empty:
+        for col in ["main_contact", "backup_contact", "responsible_sales"]:
+            if col in df_sop.columns:
+                for val in df_sop[col].dropna().astype(str).unique():
+                    if val.strip() and val.strip() != "(未指定)":
+                        all_staff.add(val.strip())
+                        
+    staff_options = ["(未指定)"] + sorted(list(all_staff)) + ["➕ 手動輸入新人員..."]
+    
     col_p1, col_p2, col_p3 = st.columns(3)
-    with col_p1: main_contact = st.text_input("CUSTOMER 主要負責同事名稱", value=old_main_c)
-    with col_p2: backup_contact = st.text_input("BACKUP 同事名稱", value=old_backup_c)
-    with col_p3: responsible_sales = st.text_input("CUSTOMER 主要負責 SALES", value=old_sales)
+    
+    # 共用的選單產生器函數
+    def render_staff_select(label, old_val, key_prefix):
+        default_idx = staff_options.index(old_val) if old_val in staff_options else 0
+        if old_val and old_val not in staff_options:
+            default_idx = len(staff_options) - 1 # 指向「手動輸入新人員...」
+            
+        selected = st.selectbox(label, staff_options, index=default_idx, key=f"sel_{key_prefix}")
+        
+        if selected == "➕ 手動輸入新人員...":
+            # 如果選了新增，就彈出一個文字框給他自己打字
+            return st.text_input(f"✍️ 輸入新的 {label}", value=old_val if old_val not in staff_options else "", key=f"txt_{key_prefix}")
+        elif selected == "(未指定)":
+            return ""
+        else:
+            return selected
+
+    with col_p1: main_contact = render_staff_select("CUSTOMER 主要負責同事", old_main_c, "main")
+    with col_p2: backup_contact = render_staff_select("BACKUP 同事名稱", old_backup_c, "backup")
+    with col_p3: responsible_sales = render_staff_select("CUSTOMER 主要負責 SALES", old_sales, "sales")
 
     st.markdown("<br>", unsafe_allow_html=True)
     col_btn1, col_btn2 = st.columns(2)
