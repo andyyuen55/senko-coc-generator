@@ -203,6 +203,10 @@ with tab3:
     df_sop = get_sop_df()
     c_id = st.text_input("1. 🔑 請輸入 CUSTOMER ID (大寫)", "").strip().upper()
     
+    # ✨ 核心修正：新增出貨帳號的「解壓縮」邏輯
+    old_ship_method = "FEDEX"
+    old_acc_no, old_tax_no, old_fw_name, old_fw_email, old_fw_tel = "", "", "", "", ""
+    
     exist_row = df_sop[df_sop["customer_id"].astype(str).str.upper() == c_id].iloc[0] if (not df_sop.empty and c_id in df_sop["customer_id"].astype(str).str.upper().values) else None
     
     if exist_row is not None:
@@ -211,6 +215,18 @@ with tab3:
         old_labels = [l.strip() for l in str(exist_row["label_formats"]).split(",") if l.strip()]
         old_notes = str(exist_row["shipping_notes"])
         old_sales, old_main_c, old_backup_c = str(exist_row["responsible_sales"]), str(exist_row["main_contact"]), str(exist_row["backup_contact"])
+        
+        # 讀取並解析出貨方式字串
+        old_method_str = str(exist_row["shipping_method_info"])
+        for line in old_method_str.split('\n'):
+            if line.startswith("出貨管道: "): 
+                parsed_method = line.replace("出貨管道: ", "").strip()
+                old_ship_method = "FORWARDER (貨代形式/自取)" if parsed_method == "貨代自取" else parsed_method
+            elif line.startswith("運費帳號: "): old_acc_no = line.replace("運費帳號: ", "").strip()
+            elif line.startswith("稅金帳號: "): old_tax_no = line.replace("稅金帳號: ", "").strip()
+            elif line.startswith("聯絡人: "): old_fw_name = line.replace("聯絡人: ", "").strip()
+            elif line.startswith("EMAIL: "): old_fw_email = line.replace("EMAIL: ", "").strip()
+            elif line.startswith("TEL: "): old_fw_tel = line.replace("TEL: ", "").strip()
     else:
         old_docs, old_labels, old_notes, old_sales, old_main_c, old_backup_c = [], [], "", "", "", ""
 
@@ -238,15 +254,20 @@ with tab3:
             st.image(uploaded_notes_img, caption="注意事項圖片預覽", width=250)
             
         st.markdown("**5. 出貨方式設定**")
-        ship_method = st.selectbox("選擇出貨管道", ["FEDEX", "UPS", "DHL", "SF", "FORWARDER (貨代形式/自取)"])
+        
+        # 動態設定選單的預設值
+        method_list = ["FEDEX", "UPS", "DHL", "SF", "FORWARDER (貨代形式/自取)"]
+        default_index = method_list.index(old_ship_method) if old_ship_method in method_list else 0
+        ship_method = st.selectbox("選擇出貨管道", method_list, index=default_index)
+        
         if ship_method != "FORWARDER (貨代形式/自取)":
-            acc_no = st.text_input("運費付款 ACCOUNT", "")
-            tax_no = st.text_input("TAX 付款 ACCOUNT", "")
+            acc_no = st.text_input("運費付款 ACCOUNT", value=old_acc_no)
+            tax_no = st.text_input("TAX 付款 ACCOUNT", value=old_tax_no)
             method_info_str = f"出貨管道: {ship_method}\n運費帳號: {acc_no}\n稅金帳號: {tax_no}"
         else:
-            fw_name = st.text_input("貨代聯絡人姓名", "")
-            fw_email = st.text_input("貨代 EMAIL", "")
-            fw_tel = st.text_input("貨代 TEL", "")
+            fw_name = st.text_input("貨代聯絡人姓名", value=old_fw_name)
+            fw_email = st.text_input("貨代 EMAIL", value=old_fw_email)
+            fw_tel = st.text_input("貨代 TEL", value=old_fw_tel)
             method_info_str = f"出貨管道: 貨代自取\n聯絡人: {fw_name}\nEMAIL: {fw_email}\nTEL: {fw_tel}"
 
     st.divider()
@@ -290,11 +311,9 @@ with tab3:
                     if uploaded_notes_img is not None:
                         img_notes_obj = InlineImage(doc_sop, io.BytesIO(uploaded_notes_img.getvalue()), width=Inches(4.0))
                     
-                    # ✨ 核心升級：將選擇的標籤加上冒號，並以「垂直換行」呈現
                     if selected_labels:
                         vert_labels = []
                         for lbl in selected_labels:
-                            # 自動將 PN 轉成 P/N，DESC 轉成 Desc
                             display_lbl = lbl.replace("PN", "P/N").replace("DESC", "Desc")
                             vert_labels.append(f"{display_lbl}:")
                         formatted_labels = "\n".join(vert_labels)
@@ -305,7 +324,7 @@ with tab3:
                         "CUSTOMER_ID": c_id,
                         "DATE": today_sop_str,
                         "REQUIRED_DOCS": ", ".join(selected_docs) if selected_docs else "無特別要求",
-                        "LABEL_FORMATS": formatted_labels,  # ✨ 傳入換行處理好的變數
+                        "LABEL_FORMATS": formatted_labels, 
                         "SHIPPING_NOTES": shipping_notes if shipping_notes.strip() else "無",
                         "SHIPPING_METHOD_INFO": method_info_str,
                         "MAIN_CONTACT": main_contact if main_contact.strip() else "未指定",
