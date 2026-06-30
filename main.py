@@ -202,10 +202,11 @@ with tab3:
     df_sop = get_sop_df()
     c_id = st.text_input("1. 🔑 請輸入 CUSTOMER ID (大寫)", "").strip().upper()
     
-    ship_type_radio = "單一快遞"
-    old_ship_method = "FEDEX"
-    old_acc_no, old_tax_no, old_fw_name, old_fw_email, old_fw_tel, old_custom_text = "", "", "", "", "", ""
-    
+    # 初始化出貨方式狀態
+    old_express_checked, old_fw_checked, old_custom_checked = False, False, False
+    old_express_company, old_express_acc, old_express_tax, old_express_remark = "FEDEX", "", "", ""
+    old_fw_name, old_fw_email, old_fw_tel, old_fw_remark = "", "", "", ""
+    old_custom_text = ""
     old_main_list, old_backup_list, old_sales_list = [], [], []
     
     exist_row = df_sop[df_sop["customer_id"].astype(str).str.upper() == c_id].iloc[0] if (not df_sop.empty and c_id in df_sop["customer_id"].astype(str).str.upper().values) else None
@@ -216,7 +217,6 @@ with tab3:
         old_labels = [l.strip() for l in str(exist_row["label_formats"]).split(",") if l.strip()]
         old_notes = str(exist_row["shipping_notes"])
         
-        # ✨ 將舊資料按逗號切開，變成陣列以支援多選
         m_c = str(exist_row["main_contact"]).strip()
         b_c = str(exist_row["backup_contact"]).strip()
         s_c = str(exist_row["responsible_sales"]).strip()
@@ -224,25 +224,49 @@ with tab3:
         old_backup_list = [s.strip() for s in b_c.split(',')] if b_c and b_c != "(未指定)" else []
         old_sales_list = [s.strip() for s in s_c.split(',')] if s_c and s_c != "(未指定)" else []
         
+        # ✨ 強大升級：相容舊版單選紀錄與新版多選標籤的「智慧解壓縮」邏輯
         old_method_str = str(exist_row["shipping_method_info"]).strip()
-        if old_method_str.startswith("出貨管道: "):
-            lines = old_method_str.split('\n')
-            parsed_method = lines[0].replace("出貨管道: ", "").strip()
-            if parsed_method == "貨代自取":
-                ship_type_radio = "貨代自取"
+        if "【" not in old_method_str and old_method_str != "":
+            # 讀取舊版的單選格式
+            if old_method_str.startswith("出貨管道: "):
+                lines = old_method_str.split('\n')
+                parsed_method = lines[0].replace("出貨管道: ", "").strip()
+                if parsed_method == "貨代自取":
+                    old_fw_checked = True
+                    for line in lines[1:]:
+                        if line.startswith("聯絡人: "): old_fw_name = line.replace("聯絡人: ", "").strip()
+                        elif line.startswith("EMAIL: "): old_fw_email = line.replace("EMAIL: ", "").strip()
+                        elif line.startswith("TEL: "): old_fw_tel = line.replace("TEL: ", "").strip()
+                else:
+                    old_express_checked = True
+                    old_express_company = parsed_method
+                    for line in lines[1:]:
+                        if line.startswith("運費帳號: "): old_express_acc = line.replace("運費帳號: ", "").strip()
+                        elif line.startswith("稅金帳號: "): old_express_tax = line.replace("稅金帳號: ", "").strip()
             else:
-                ship_type_radio = "單一快遞"
-                old_ship_method = parsed_method
-                
-            for line in lines[1:]:
-                if line.startswith("運費帳號: "): old_acc_no = line.replace("運費帳號: ", "").strip()
-                elif line.startswith("稅金帳號: "): old_tax_no = line.replace("稅金帳號: ", "").strip()
-                elif line.startswith("聯絡人: "): old_fw_name = line.replace("聯絡人: ", "").strip()
-                elif line.startswith("EMAIL: "): old_fw_email = line.replace("EMAIL: ", "").strip()
-                elif line.startswith("TEL: "): old_fw_tel = line.replace("TEL: ", "").strip()
-        elif old_method_str != "":
-            ship_type_radio = "多種條件 / 待備貨後決定 (自訂)"
-            old_custom_text = old_method_str
+                old_custom_checked = True
+                old_custom_text = old_method_str
+        else:
+            # 讀取新版的多選模塊格式
+            blocks = old_method_str.split('\n\n')
+            for block in blocks:
+                if block.startswith("【快遞出貨】"):
+                    old_express_checked = True
+                    for line in block.split('\n'):
+                        if line.startswith("公司: "): old_express_company = line.replace("公司: ", "").strip()
+                        elif line.startswith("運費帳號: "): old_express_acc = line.replace("運費帳號: ", "").strip()
+                        elif line.startswith("稅金帳號: "): old_express_tax = line.replace("稅金帳號: ", "").strip()
+                        elif line.startswith("備註: "): old_express_remark = line.replace("備註: ", "").strip()
+                elif block.startswith("【貨代自取】"):
+                    old_fw_checked = True
+                    for line in block.split('\n'):
+                        if line.startswith("聯絡人: "): old_fw_name = line.replace("聯絡人: ", "").strip()
+                        elif line.startswith("EMAIL: "): old_fw_email = line.replace("EMAIL: ", "").strip()
+                        elif line.startswith("TEL: "): old_fw_tel = line.replace("TEL: ", "").strip()
+                        elif line.startswith("備註: "): old_fw_remark = line.replace("備註: ", "").strip()
+                elif block.startswith("【自訂條件】"):
+                    old_custom_checked = True
+                    old_custom_text = block.replace("【自訂條件】\n詳細指示:\n", "").strip()
     else:
         old_docs, old_labels, old_notes = [], [], ""
 
@@ -271,33 +295,48 @@ with tab3:
             for img in uploaded_notes_imgs:
                 st.image(img, caption=img.name, width=200)
             
-        st.markdown("**5. 出貨方式設定**")
+        # ✨ 全新升級：模組化多選出貨方式
+        st.markdown("**5. 出貨方式設定 (可多選並加入專屬備註)**")
         
-        ship_type = st.radio("選擇出貨情境", ["單一快遞", "貨代自取", "多種條件 / 待備貨後決定 (自訂)"], 
-                             index=["單一快遞", "貨代自取", "多種條件 / 待備貨後決定 (自訂)"].index(ship_type_radio), horizontal=True)
-        
-        if ship_type == "單一快遞":
+        express_checked = st.checkbox("🚚 快遞出貨", value=old_express_checked)
+        if express_checked:
             method_list = ["FEDEX", "UPS", "DHL", "SF"]
-            default_index = method_list.index(old_ship_method) if old_ship_method in method_list else 0
-            ship_method = st.selectbox("快遞公司", method_list, index=default_index)
-            acc_no = st.text_input("運費付款 ACCOUNT", value=old_acc_no)
-            tax_no = st.text_input("TAX 付款 ACCOUNT", value=old_tax_no)
-            method_info_str = f"出貨管道: {ship_method}\n運費帳號: {acc_no}\n稅金帳號: {tax_no}"
+            default_index = method_list.index(old_express_company) if old_express_company in method_list else 0
             
-        elif ship_type == "貨代自取":
-            fw_name = st.text_input("貨代聯絡人姓名", value=old_fw_name)
-            fw_email = st.text_input("貨代 EMAIL", value=old_fw_email)
-            fw_tel = st.text_input("貨代 TEL", value=old_fw_tel)
-            method_info_str = f"出貨管道: 貨代自取\n聯絡人: {fw_name}\nEMAIL: {fw_email}\nTEL: {fw_tel}"
-            
-        else:
-            custom_note = st.text_area("✍️ 請描述詳細出貨條件 (例如: 45kg以下用Fedex帳號1234，超重待通知 / 待提供重量尺寸後決定)", value=old_custom_text, height=150)
-            method_info_str = custom_note
+            col_e1, col_e2, col_e3 = st.columns(3)
+            with col_e1: express_company = st.selectbox("快遞公司", method_list, index=default_index)
+            with col_e2: express_acc = st.text_input("運費付款 ACCOUNT", value=old_express_acc)
+            with col_e3: express_tax = st.text_input("TAX 付款 ACCOUNT", value=old_express_tax)
+            express_remark = st.text_input("📝 快遞備註 (例如: 45kg以下用此方式)", value=old_express_remark)
+
+        fw_checked = st.checkbox("🏢 貨代自取", value=old_fw_checked)
+        if fw_checked:
+            col_f1, col_f2, col_f3 = st.columns(3)
+            with col_f1: fw_name = st.text_input("聯絡人姓名", value=old_fw_name)
+            with col_f2: fw_email = st.text_input("EMAIL", value=old_fw_email)
+            with col_f3: fw_tel = st.text_input("TEL", value=old_fw_tel)
+            fw_remark = st.text_input("📝 貨代備註 (例如: 超重時轉交此貨代)", value=old_fw_remark)
+
+        custom_checked = st.checkbox("✍️ 特殊 / 待確認條件 (自訂)", value=old_custom_checked)
+        if custom_checked:
+            custom_text = st.text_area("請描述詳細出貨條件 (例如: 待備貨後確認尺寸決定)", value=old_custom_text, height=100)
+
+        # 把勾選的所有方式打包成漂亮的一串字，準備存入 Google Sheet 和 Word
+        info_blocks = []
+        if express_checked:
+            info_blocks.append(f"【快遞出貨】\n公司: {express_company}\n運費帳號: {express_acc}\n稅金帳號: {express_tax}\n備註: {express_remark}")
+        if fw_checked:
+            info_blocks.append(f"【貨代自取】\n聯絡人: {fw_name}\nEMAIL: {fw_email}\nTEL: {fw_tel}\n備註: {fw_remark}")
+        if custom_checked:
+            info_blocks.append(f"【自訂條件】\n詳細指示:\n{custom_text}")
+        
+        method_info_str = "\n\n".join(info_blocks)
+        if not method_info_str:
+            method_info_str = "未設定出貨方式"
 
     st.divider()
     st.markdown("**6. 內部與客戶對接窗口人員 (支援多選與自動記憶)**")
     
-    # ✨ 核心升級：抓取歷史紀錄，切割成獨立人名放入選項
     all_staff = set()
     if not df_sop.empty:
         for col in ["main_contact", "backup_contact", "responsible_sales"]:
@@ -311,13 +350,10 @@ with tab3:
     staff_options = sorted(list(all_staff))
     
     col_p1, col_p2, col_p3 = st.columns(3)
-    
-    # 建立多選與手動新增功能的區塊
     with col_p1: 
         valid_mains = [s for s in old_main_list if s in staff_options]
         sel_mains = st.multiselect("👥 主要負責同事 (可多選)", staff_options, default=valid_mains)
         new_main = st.text_input("➕ 手動補充 (如有兩人請用逗號分隔)", "", key="new_m")
-        # 合併選項與手動輸入的人員
         final_mains = sel_mains + ([s.strip() for s in new_main.split(',')] if new_main.strip() else [])
         main_contact = ", ".join(final_mains) if final_mains else "(未指定)"
 
@@ -386,7 +422,7 @@ with tab3:
                         "REQUIRED_DOCS": ", ".join(selected_docs) if selected_docs else "無特別要求",
                         "LABEL_FORMATS": formatted_labels, 
                         "SHIPPING_NOTES": shipping_notes if shipping_notes.strip() else "無",
-                        "SHIPPING_METHOD_INFO": method_info_str,
+                        "SHIPPING_METHOD_INFO": method_info_str, # ✨ 多選的內容會原封不動貼入 Word
                         "MAIN_CONTACT": main_contact if main_contact.strip() else "未指定",
                         "BACKUP_CONTACT": backup_contact if backup_contact.strip() else "未指定",
                         "RESPONSIBLE_SALES": responsible_sales if responsible_sales.strip() else "未指定",
